@@ -342,16 +342,33 @@ async function loadLastMatch() {
       if (res.status === 404) {
         document.getElementById("lastMatchInfo").innerHTML =
           '<p class="no-matches">Нет завершённых матчей</p>';
+        document.getElementById("matchLineup").innerHTML = "";
+        document.getElementById("matchSubstitutions").innerHTML = "";
+        document.getElementById("matchStats").innerHTML = "";
+        document.getElementById("matchEvents").innerHTML = "";
         return;
       }
       throw new Error();
     }
     const match = await res.json();
     displayLastMatch(match);
-    await loadMatchLineup(match.id);
-    await loadMatchStats(match.id);
+
+    const [lineupRes, statsRes] = await Promise.all([
+      fetch(`/api/clubs/matches/${match.id}/lineup`),
+      fetch(`/api/clubs/matches/${match.id}/stats`),
+    ]);
+
+    const lineup = await lineupRes.json();
+    const stats = await statsRes.json();
+
+    displayLineup(lineup);
+    displayMatchEvents(lineup); // ← обязательно должна быть эта строка
+    displaySubstitutions(lineup.filter((p) => !p.is_starter));
+    displayMatchStats(stats);
   } catch (error) {
     console.error(error);
+    document.getElementById("lastMatchInfo").innerHTML =
+      '<p class="error">Ошибка загрузки последнего матча</p>';
   }
 }
 
@@ -393,17 +410,131 @@ function displayLineup(lineup) {
     else if (player.position === "forward") positions.forwards.push(player);
     else positions.midfielders.push(player);
   });
+
+  // Функция для форматирования информации об игроке
+  function formatPlayerInfo(p) {
+    let info = `<span class="player-number">${p.number || ""}</span> ${escapeHtml(p.name)}`;
+
+    // Голы
+    if (p.goals > 0) {
+      info += ` ⚽${p.goals}`;
+      // Минута гола не хранится отдельно, но можно добавить, если есть
+      // Например, если вы сохраняете минуты голов в отдельном поле, можно добавить
+    }
+
+    // Жёлтые карточки
+    if (p.yellow_cards > 0) {
+      info += ` 🟨${p.yellow_cards}`;
+    }
+
+    // Красные карточки
+    if (p.red_cards > 0) {
+      info += ` 🟥${p.red_cards}`;
+    }
+
+    // Минута выхода (для запасных, но и для стартовых может быть 0)
+    if (p.minute_in && p.minute_in > 0) {
+      info += ` (вышел: ${p.minute_in}')`;
+    }
+    if (p.minute_out && p.minute_out > 0) {
+      info += ` (ушел: ${p.minute_out}')`;
+    }
+
+    return info;
+  }
+
   const container = document.getElementById("matchLineup");
-  container.innerHTML = `<div class="formation"><div class="position-group"><div class="position-title">🥅 Вратарь</div><div class="players-grid">${positions.goalkeeper.map((p) => `<div class="player-card"><span class="player-number">${p.number || ""}</span> ${escapeHtml(p.name)}</div>`).join("")}</div></div><div class="position-group"><div class="position-title">🛡️ Защитники</div><div class="players-grid">${positions.defenders.map((p) => `<div class="player-card"><span class="player-number">${p.number || ""}</span> ${escapeHtml(p.name)}</div>`).join("")}</div></div><div class="position-group"><div class="position-title">⚡ Полузащитники</div><div class="players-grid">${positions.midfielders.map((p) => `<div class="player-card"><span class="player-number">${p.number || ""}</span> ${escapeHtml(p.name)}</div>`).join("")}</div></div><div class="position-group"><div class="position-title">🎯 Нападающие</div><div class="players-grid">${positions.forwards.map((p) => `<div class="player-card"><span class="player-number">${p.number || ""}</span> ${escapeHtml(p.name)}</div>`).join("")}</div></div></div>`;
+  container.innerHTML = `
+    <div class="formation">
+      <div class="position-group">
+        <div class="position-title">🥅 Вратарь</div>
+        <div class="players-grid">${positions.goalkeeper.map((p) => `<div class="player-card">${formatPlayerInfo(p)}</div>`).join("")}</div>
+      </div>
+      <div class="position-group">
+        <div class="position-title">🛡️ Защитники</div>
+        <div class="players-grid">${positions.defenders.map((p) => `<div class="player-card">${formatPlayerInfo(p)}</div>`).join("")}</div>
+      </div>
+      <div class="position-group">
+        <div class="position-title">⚡ Полузащитники</div>
+        <div class="players-grid">${positions.midfielders.map((p) => `<div class="player-card">${formatPlayerInfo(p)}</div>`).join("")}</div>
+      </div>
+      <div class="position-group">
+        <div class="position-title">🎯 Нападающие</div>
+        <div class="players-grid">${positions.forwards.map((p) => `<div class="player-card">${formatPlayerInfo(p)}</div>`).join("")}</div>
+      </div>
+    </div>
+  `;
+}
+
+function displayMatchEvents(lineup) {
+  const container = document.getElementById("matchEvents");
+  if (!container) return;
+
+  // Группируем голы по игроку (суммируем)
+  const goalMap = new Map();
+  lineup.forEach((p) => {
+    if (p.goals > 0) {
+      const key = `${p.player_id}-${p.position}`; // можно просто по id, но у гостей id разные
+      const isHome = p.is_starter === 1 || p.minute_in > 0;
+      const team = isHome ? "Неман" : "Барселона";
+      const existing = goalMap.get(key);
+      if (existing) {
+        existing.goals += p.goals;
+      } else {
+        goalMap.set(key, { name: p.name, team, goals: p.goals });
+      }
+    }
+  });
+
+  // Группируем красные карточки (просто список)
+  const reds = lineup.filter((p) => p.red_cards > 0);
+
+  let html = "";
+
+  // Блок голов
+  if (goalMap.size > 0) {
+    html += `<div class="match-goals"><h4>⚽ Голы</h4><ul>`;
+    for (const [_, data] of goalMap) {
+      html += `<li><strong>${escapeHtml(data.name)}</strong> (${data.team}) – ${data.goals} ${declOfNum(data.goals, ["гол", "гола", "голов"])}</li>`;
+    }
+    html += `</ul></div>`;
+  }
+
+  // Блок красных карточек
+  if (reds.length > 0) {
+    html += `<div class="match-reds"><h4>🟥 Красные карточки</h4><ul>`;
+    reds.forEach((p) => {
+      const isHome = p.is_starter === 1 || p.minute_in > 0;
+      const team = isHome ? "Неман" : "Барселона";
+      html += `<li><strong>${escapeHtml(p.name)}</strong> (${team}) – удалён</li>`;
+    });
+    html += `</ul></div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// Вспомогательная функция для склонения
+function declOfNum(n, titles) {
+  n = Math.abs(n) % 100;
+  if (n > 10 && n < 20) return titles[2];
+  n %= 10;
+  if (n === 1) return titles[0];
+  if (n >= 2 && n <= 4) return titles[1];
+  return titles[2];
 }
 
 function displaySubstitutions(subs) {
   const container = document.getElementById("matchSubstitutions");
-  if (!subs.length) {
+  if (!container) return;
+
+  // Показываем только замены Немана (минута выхода > 0)
+  const homeSubs = subs.filter((p) => p.minute_in > 0 && p.minute_in !== null);
+  if (!homeSubs.length) {
     container.innerHTML = '<p class="no-data">Замен не было</p>';
     return;
   }
-  container.innerHTML = `<div class="substitutions-grid">${subs.map((sub) => `<div class="sub-card"><span class="sub-player">${escapeHtml(sub.name)}</span><span class="sub-minute">${sub.minute_in || "?"}'</span></div>`).join("")}</div>`;
+  container.innerHTML = `<div class="substitutions-grid">${homeSubs.map((sub) => `<div class="sub-card"><span class="sub-player">${escapeHtml(sub.name)}</span><span class="sub-minute">${sub.minute_in || "?"}'</span></div>`).join("")}</div>`;
 }
 
 async function loadMatchStats(matchId) {

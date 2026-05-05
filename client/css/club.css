@@ -2348,3 +2348,34 @@ header {
   justify-content: center;
   margin-right: 8px;
 }
+
+.match-events {
+  margin-top: 15px;
+  padding: 10px 0;
+  border-top: 1px solid #eee;
+}
+
+.match-events h4 {
+  font-size: 16px;
+  margin: 8px 0 4px;
+  color: #333;
+}
+
+.match-events ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px 0;
+}
+
+.match-events li {
+  padding: 3px 0;
+  font-size: 14px;
+}
+
+.match-goals li {
+  color: #2a7a2a;
+}
+
+.match-reds li {
+  color: #b33;
+}
